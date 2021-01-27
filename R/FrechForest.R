@@ -180,11 +180,18 @@ impurity_split <- function(Y,split,timeScale=0.1){
 
     if (Y$type == "surv"){
 
+      # on recupere la repartition des groupes avec split et test logrank pour maximiser dessus
+      # longueur de la taille des individus OOB
+
       tryCatch({
         sp=NULL
         for (i in 1:length(split)){
           sp = c(sp, rep(split[i],length(which(Y$id==unique(Y$id)[i]))))
         }
+
+        # pourquoi cette formule de l'impurete ?
+        # ça peut pas etre juste le score du logrank ? non car imputere à minimiser, du coup inverse du logrank ?
+
         impur= 1/(1+survdiff(Surv(Y$time,Y$Y)~sp)$chisq)}, error = function(sp){impur=Inf})
 
     }
@@ -524,10 +531,32 @@ var_split <- function(X ,Y,timeScale=0.1){
     }
 
     if( X$type=="curve"){
-      mclds <- kmlShape::cldsWide(ordonne(X$X[,i], X$time, X$id), unique(X$time), unique(X$id))
-      crit <- kmlShape::kmlShape(mclds, nbClusters = 2, timeScale = timeScale, toPlot="none")
-      att <- attributes(crit)
-      split[[i]] <- att$clusters
+
+      ##############################
+      # mclds <- kmlShape::cldsWide(ordonne(X$X[,i], X$time, X$id), unique(X$time), unique(X$id))
+      # crit <- kmlShape::kmlShape(mclds, nbClusters = 2, timeScale = timeScale, toPlot="none")
+      # att <- attributes(crit)
+      # split[[i]] <- att$clusters
+      #############################
+
+      ############################
+
+      # inclure modele mixte pour construire les resumes + repartition des individus dans chaque noeud pour chaque resume
+      # mtry2 sur les resumes ?
+
+      test <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,1])
+      model.output <- hlme(fixed = marker ~ time,
+                           random = ~ time,
+                           subject = "id", data = test)
+
+
+      # a automatiser avec une fonction à creer predRE pour calculer les RE a partir des parametres du model
+      # (voir predRE.lcmm de hdlandmark)
+      predRE <- model.output$predRE
+
+      ###########################
+
+
       impurete <- impurity_split(Y,split[[i]], timeScale)
       impur[i] <- impurete$impur
       toutes_imp[[i]] <- impurete$imp_list
@@ -1396,6 +1425,7 @@ pred.FT <- function(tree, Curve=NULL,Scalar=NULL,Factor=NULL,Shape=NULL,Image=NU
 #' @keywords internal
 Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y,mtry,ERT=FALSE,aligned.shape=FALSE,ntry=3, timeScale=0.1, ...){
 
+  browser()
 
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
   Inputs <- inputs
@@ -1460,6 +1490,9 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
       for (v in Inputs){
         V <- c(V, rep(get(v)$type,dim(get(v)$X)[length(dim(get(v)$X))]))
       }
+
+      # mtry des espaces
+
       variables <- sample(V,mtry) # Maintenant on sait combien on doit en tirer dans chaque espace
       # On ne va regarder que les espaces tirés :
       split.spaces <- unique(variables)
@@ -1483,6 +1516,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
       if (length(unique(Y_boot$id[w]))>1 & imp_nodes[[unique(id_feuille)[i]]] >0){
 
         # On est ici
+
+        # mtry des variables de chaque espace
 
         if (is.element("curve",split.spaces)==TRUE){
           tirageCurve <- sample(1:ncol(Curve$X),length(which(variables=="curve")))
@@ -1526,6 +1561,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
         F_SPLIT <- NULL
         decoupe <- 0
 
+        # on test les meilleurs splits sur chacun des variables factor tire par mtry
+
         if (is.element("factor",split.spaces)==TRUE){
 
           if( ERT==FALSE){
@@ -1539,6 +1576,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
             decoupe <- decoupe +1
           }
         }
+
+        # on test les meilleurs splits sur chacun des markers tire par mtry
 
         if (is.element("curve",split.spaces)==TRUE){
 
@@ -1601,7 +1640,11 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           X <- get(TYPE)
           X_boot <- get(paste(TYPE,"_boot",sep=""))
 
+          # on retrouve la repartition des individus OOB sur la variable qui minimise l'impurete
+
           feuille_split <- get(paste("feuille_split_",TYPE, sep=""))
+
+          # on recupere la variable sur laquelle on a split
 
           vsplit_space <- get(paste("tirage",TYPE, sep=""))[feuille_split$variable]
 
@@ -1643,6 +1686,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           id_feuille_prime[wY_droit] <- 2*(unique(id_feuille)[i])+1
 
           #print(paste("Split on the variable", vsplit_space, "on the space of ", paste(TYPE,"s",sep="")))
+
+          # meanFg et Fd doivent contenir les courbes moyennes issue du modele mixte
 
           if (X$type=="curve"){
             trajG <- as.data.frame(cbind(X_boot$id[w_gauche], X_boot$time[w_gauche], X_boot$X[w_gauche,vsplit_space]))
@@ -1795,14 +1840,14 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 #' @keywords internal
 rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=NULL,Y,mtry,ntree, ncores,ERT=FALSE, aligned.shape=FALSE,ntry=3,timeScale=0.1, ...){
 
-  cl <- parallel::makeCluster(ncores)
-  doParallel::registerDoParallel(cl)
+  #cl <- parallel::makeCluster(ncores)
+  #doParallel::registerDoParallel(cl)
 
-  trees <- pbsapply(1:ntree, FUN=function(i){
+  #trees <- pbsapply(1:ntree, FUN=function(i){
     Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale, ...)
-  },cl=cl)
+  #},cl=cl)
 
-  parallel::stopCluster(cl)
+  #parallel::stopCluster(cl)
 
   return(trees)
 }
@@ -2594,6 +2639,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
     ncores <- detectCores()-1
   }
 
+
+  browser()
 
   print("Building the maximal Frechet trees...")
 
