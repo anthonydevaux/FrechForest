@@ -544,7 +544,7 @@ var_split <- function(X ,Y,timeScale=0.1){
       # inclure modele mixte pour construire les resumes + repartition des individus dans chaque noeud pour chaque resume
       # mtry2 sur les resumes ?
 
-      test <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,1])
+      test <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,i])
       model.output <- hlme(fixed = marker ~ time,
                            random = ~ time,
                            subject = "id", data = test)
