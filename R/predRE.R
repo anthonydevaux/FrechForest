@@ -6,11 +6,15 @@
 #' @return
 #' @export
 #'
+#' @importFrom lcmm fixef
+#'
 #' @examples
 predRE <- function(model, data){
 
+  # a revoir pour gerer les NA
+
   subject <- model$call$subject
-  beta <- fixef(model)[[2]]
+  beta <- lcmm::fixef(model)[[2]]
 
   # Variance-covariance matrix of the random-effects
 

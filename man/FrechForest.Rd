@@ -4,23 +4,10 @@
 \alias{FrechForest}
 \title{Frechet Random Forest}
 \usage{
-FrechForest(
-  Curve = NULL,
-  Scalar = NULL,
-  Factor = NULL,
-  Shape = NULL,
-  Image = NULL,
-  Y,
-  mtry = NULL,
-  ntree = 100,
-  ncores = NULL,
-  ERT = FALSE,
-  timeScale = 0.1,
-  ntry = 3,
-  imp = TRUE,
-  d_out = 0.1,
-  ...
-)
+FrechForest(Curve = NULL, Scalar = NULL, Factor = NULL,
+  Shape = NULL, Image = NULL, Y, mtry = NULL, ntree = 100,
+  ncores = NULL, ERT = FALSE, timeScale = 0.1, ntry = 3,
+  imp = TRUE, d_out = 0.1, splitrule = NULL, ...)
 }
 \arguments{
 \item{Curve}{[list]: A list that contains the different input curves. It must contain the following elements (no choice): \code{X} the matrix of the different curves, each column code for a different curve variable; \code{id} is the vector of the identifiers for the different trajectories contained in \code{X}; \code{time} is the vector of the measurement times associated with the trajectories contained in \code{X}.}

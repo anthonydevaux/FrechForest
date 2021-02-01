@@ -4,16 +4,9 @@
 \alias{pred.FT}
 \title{Predict Frechet tree}
 \usage{
-pred.FT(
-  tree,
-  Curve = NULL,
-  Scalar = NULL,
-  Factor = NULL,
-  Shape = NULL,
-  Image = NULL,
-  aligned.shape = FALSE,
-  timeScale = 0.1
-)
+pred.FT(tree, Curve = NULL, Scalar = NULL, Factor = NULL,
+  Shape = NULL, Image = NULL, aligned.shape = FALSE,
+  timeScale = 0.1)
 }
 \arguments{
 \item{tree}{: Frechet tree.}
@@ -31,9 +24,6 @@ pred.FT(
 \item{aligned.shape}{[logical]: \code{TRUE} if the input shapes are aligned and normalized (\code{aligned.shape=FALSE} by default)}
 
 \item{timeScale}{[numeric]: Time scale for the input and output curves (\code{timeScale=0.1} by default)}
-}
-\value{
-
 }
 \description{
 Predict Frechet tree

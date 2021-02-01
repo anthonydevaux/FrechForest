@@ -4,14 +4,8 @@
 \alias{FrechetTree}
 \title{General Frechet Tree}
 \usage{
-FrechetTree(
-  Curve = NULL,
-  Scalar = NULL,
-  Factor = NULL,
-  Y,
-  timeScale = 0.1,
-  ncores = NULL
-)
+FrechetTree(Curve = NULL, Scalar = NULL, Factor = NULL, Y,
+  timeScale = 0.1, ncores = NULL)
 }
 \arguments{
 \item{Curve}{[list]:}
@@ -25,9 +19,6 @@ FrechetTree(
 \item{timeScale}{[numeric]:}
 
 \item{ncores}{[numeric]:}
-}
-\value{
-
 }
 \description{
 General Frechet Tree

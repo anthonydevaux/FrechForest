@@ -183,17 +183,19 @@ impurity_split <- function(Y,split,timeScale=0.1){
       # on recupere la repartition des groupes avec split et test logrank pour maximiser dessus
       # longueur de la taille des individus OOB
 
-      tryCatch({
-        sp=NULL
-        for (i in 1:length(split)){
-          sp = c(sp, rep(split[i],length(which(Y$id==unique(Y$id)[i]))))
-        }
+      # tryCatch({
+      #   sp=NULL
+      #   for (i in 1:length(split)){
+      #     sp = c(sp, rep(split[i],length(which(Y$id==unique(Y$id)[i]))))
+      #   }
+      #
+      #   # pourquoi cette formule de l'impurete ?
+      #   # ça peut pas etre juste le score du logrank ? non car imputere à minimiser, du coup inverse du logrank ?
+      #
+      #   impur= 1/(1+survdiff(Surv(Y$time,Y$Y)~sp)$chisq)}, error = function(sp){impur=Inf})
 
-        # pourquoi cette formule de l'impurete ?
-        # ça peut pas etre juste le score du logrank ? non car imputere à minimiser, du coup inverse du logrank ?
-
-        impur= 1/(1+survdiff(Surv(Y$time,Y$Y)~sp)$chisq)}, error = function(sp){impur=Inf})
-
+      impur= 1/(1+survdiff(Surv(Y$time,Y$Y)~split)$chisq)
+      break
     }
   }
   return(list(impur=impur, imp_list=imp))
@@ -479,8 +481,6 @@ ERvar_split <- function(X ,Y,ntry=3,timeScale=0.1){
   return(list(split=split, impurete=min(impur),impur_list = toutes_imp[[true_split]], variable=which.min(impur), Pure=Pure))
 }
 
-
-
 #' Classical Variable Split function
 #'
 #' @param X
@@ -530,36 +530,16 @@ var_split <- function(X ,Y,timeScale=0.1){
       }
     }
 
-    if( X$type=="curve"){
+    if( X$type=="curve" & Y$type!="surv"){
 
-      ##############################
-      # mclds <- kmlShape::cldsWide(ordonne(X$X[,i], X$time, X$id), unique(X$time), unique(X$id))
-      # crit <- kmlShape::kmlShape(mclds, nbClusters = 2, timeScale = timeScale, toPlot="none")
-      # att <- attributes(crit)
-      # split[[i]] <- att$clusters
-      #############################
-
-      ############################
-
-      # inclure modele mixte pour construire les resumes + repartition des individus dans chaque noeud pour chaque resume
-      # mtry2 sur les resumes ?
-
-      test <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,i])
-      model.output <- hlme(fixed = marker ~ time,
-                           random = ~ time,
-                           subject = "id", data = test)
-
-
-      # a automatiser avec une fonction à creer predRE pour calculer les RE a partir des parametres du model
-      # (voir predRE.lcmm de hdlandmark)
-      predRE <- model.output$predRE
-
-      ###########################
-
-
+      mclds <- kmlShape::cldsWide(ordonne(X$X[,i], X$time, X$id), unique(X$time), unique(X$id))
+      crit <- kmlShape::kmlShape(mclds, nbClusters = 2, timeScale = timeScale, toPlot="none")
+      att <- attributes(crit)
+      split[[i]] <- att$clusters
       impurete <- impurity_split(Y,split[[i]], timeScale)
       impur[i] <- impurete$impur
       toutes_imp[[i]] <- impurete$imp_list
+
     }
 
     if(X$type=="scalar"){
@@ -595,6 +575,164 @@ var_split <- function(X ,Y,timeScale=0.1){
 }
 
 
+#' Antho Variable Split function
+#'
+#' @param X
+#' @param Y
+#' @param timeScale
+#'
+#' @import kmlShape
+#' @import Evomorph
+#' @import RiemBase
+#' @import lcmm
+#'
+#' @keywords internal
+var_split_summary <- function(X ,Y,timeScale=0.1){
+  # Pour le moment on se concentre sur le cas des variables courbes ::
+  impur <- rep(0,dim(X$X)[length(dim(X$X))])
+  toutes_imp <- list()
+  split <- list()
+  centers <- list() # On va stocker les centres associés aux kmeans
+  Pure <- FALSE
+  model_output <- list()
+  threshold <- variable_summary <- rep(NA, ncol(X$X))
+
+  for (i in 1:dim(X$X)[length(dim(X$X))]){
+
+    if (X$type=="factor"){
+      if (length(unique(X$X[,i]))>1){
+        L <- Fact.partitions(X$X[,i],X$id)
+        split_courant <- list()
+        impur_courant <- rep(NA,length(L))
+        toutes_imp_courant <- list()
+        # Il faut maintenant regarder quelles sont les meilleures combinaisons ::
+        for (k in 1:length(L)){
+          split_courant[[k]] <- rep(2,length(X$id))
+          for (l in L[[k]]){
+            split_courant[[k]][which(X$id==l)] <- 1
+          }
+          # Il faut maintenant regarder la qualité du découpage ::
+          impurete <- impurity_split(Y,split_courant[[k]])
+          impur_courant[k] <- impurete$impur
+          toutes_imp_courant[[k]] <- impurete$imp_list
+        }
+        select <- which.min(impur_courant)
+        split[[i]] <- split_courant[[select]]
+        impur[i] <- impur_courant[select]
+        toutes_imp[[i]] <- toutes_imp_courant[[select]]
+      }
+      else {
+        impur[i] <- Inf
+        split[[i]] <- Inf
+      }
+    }
+
+    if (X$type=="curve"){
+
+      # modele mixte pour construire les resumes
+
+      data_model <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,i])
+      model_output[[i]] <- hlme(fixed = marker ~ time,
+                           random = ~ time,
+                           subject = "id", data = data_model)
+      RE <- predRE(model_output[[i]], data_model)$bi
+
+      ###########################
+
+      # ici on peut envisager d'autres resumes a calculer
+
+      ###########################
+
+      data_summaries <- RE # on merge tous les resumes
+
+      nsplit <- 10
+
+      mtry2 <- ncol(data_summaries) # nombre de resumes qu'on tire pour chaque variable
+      var_mtry2 <- sample(1:ncol(data_summaries), mtry2)
+
+      imperete_sum <- rep(NA, length(var_mtry2))
+      split_sum <- list()
+      split_threholds_sum <- rep(NA, length(var_mtry2))
+
+      for (i_sum in var_mtry2){ # boucle sur les resumes tires
+
+        split_threholds <- runif(nsplit, min = min(data_summaries[,i_sum]),
+                                 max = max(data_summaries[,i_sum]))
+
+        impurete_nsplit <- rep(NA, nsplit)
+        split_nsplit <- list()
+
+        for (j in 1:nsplit){ # boucle sur les nsplit
+
+          split_nsplit[[j]] <- factor(ifelse(data_summaries[,i_sum]<=split_threholds[j],1,2))
+          impurete <- impurity_split(Y,split_nsplit[[j]], timeScale)
+          impurete_nsplit[j] <- impurete$impur
+
+        }
+
+        imperete_sum[i_sum] <- impurete_nsplit[which.min(impurete_nsplit)]
+        split_sum[[i_sum]] <- split_nsplit[[which.min(impurete_nsplit)]]
+        split_threholds_sum[i_sum] <- split_threholds[which.min(impurete_nsplit)]
+      }
+
+      variable_summary[i] <- var_mtry2[which.min(imperete_sum)]
+      split[[i]] <- split_sum[[which.min(imperete_sum)]]
+      impur[i] <- imperete_sum[which.min(imperete_sum)]
+      threshold[i] <- split_threholds_sum[which.min(imperete_sum)]
+      toutes_imp[[i]] <- impurete$imp_list # NULL pour surv
+
+    }
+
+    if(X$type=="scalar"){
+      if (length(unique(X$X[,i]))>2){
+
+        nsplit <- 10
+
+        split_threholds <- runif(nsplit, min = min(X$X[,i]), max = max(X$X[,i]))
+
+        impurete_nsplit <- rep(NA, nsplit)
+        split_nsplit <- list()
+
+        for (j in 1:nsplit){ # boucle sur les nsplit
+
+          split_nsplit[[j]] <- factor(ifelse(X$X[,i]<=split_threholds[j],1,2))
+          impurete <- impurity_split(Y,split_nsplit[[j]], timeScale)
+          impurete_nsplit[j] <- impurete$impur
+
+        }
+
+        split[[i]] <- split_nsplit[[which.min(impurete_nsplit)]]
+        impur[i] <- impurete_nsplit[which.min(impurete_nsplit)]
+        toutes_imp[[i]] <- impurete$imp_list # NULL pour surv
+
+      }
+
+      if (length(unique(X$X[,i]))==2){
+        split[[i]] <- rep(2,length(X$X[,i]))
+        split[[i]][which(X$X[,i]==unique(X$X[,i])[1])] <- 1
+        impurete <- impurity_split(Y,split[[i]], timeScale)
+        impur[i] <- impurete$impur
+        toutes_imp[[i]] <- impurete$imp_list
+      }
+
+      if (length(unique(X$X[,i]))==1) {
+        impur[i] <- Inf
+        split[[i]] <- Inf
+      }
+    }
+  }
+
+  if (length(unique(impur))==1 & is.element(Inf,impur)==TRUE){
+    return(list(Pure=TRUE))
+  }
+  true_split <- which.min(impur)
+  split <- split[[true_split]]
+  return(list(split=split, impurete=min(impur),impur_list = toutes_imp[[true_split]], variable=which.min(impur),
+              variable_summary=ifelse(X$type=="curve", variable_summary[true_split], NA),
+              threshold=ifelse(X$type=="curve", threshold[true_split], NA),
+              model_output=ifelse(X$type=="curve", list(model_output[[true_split]]), NA),
+              Pure=Pure))
+}
 
 #' Maximal Fréchet tree
 #'
@@ -1423,9 +1561,7 @@ pred.FT <- function(tree, Curve=NULL,Scalar=NULL,Factor=NULL,Shape=NULL,Image=NU
 #' @import survival
 #'
 #' @keywords internal
-Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y,mtry,ERT=FALSE,aligned.shape=FALSE,ntry=3, timeScale=0.1, ...){
-
-  browser()
+Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y,mtry,ERT=FALSE,aligned.shape=FALSE,ntry=3, timeScale=0.1, splitrule=NULL, ...){
 
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
   Inputs <- inputs
@@ -1481,6 +1617,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
   id_feuille <- rep(1,length(Y_boot$id)) #### localisation des feuilles de l'arbre
   id_feuille_prime <- id_feuille
+
+  browser()
 
   for (p in 1:(length(unique(Y_boot$id))/2-1)){
     count_split <- 0
@@ -1566,7 +1704,13 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
         if (is.element("factor",split.spaces)==TRUE){
 
           if( ERT==FALSE){
-            feuille_split_Factor <- var_split(Factor_courant,Y_courant,timeScale)
+
+            if (splitrule=="Antho"){
+              feuille_split_Factor <- var_split_summary(Factor_courant,Y_courant,timeScale)
+            }else{
+              feuille_split_Factor <- var_split(Factor_courant,Y_courant,timeScale)
+            }
+
           }
 
           else{feuille_split_Factor <- ERvar_split(Factor_courant,Y_courant,timeScale,ntry = ntry)}
@@ -1582,7 +1726,13 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
         if (is.element("curve",split.spaces)==TRUE){
 
           if( ERT==FALSE){
-            feuille_split_Curve <- var_split(Curve_courant,Y_courant,timeScale)
+
+            if (splitrule=="Antho"){
+              feuille_split_Curve <- var_split_summary(Curve_courant,Y_courant,timeScale)
+            }else{
+              feuille_split_Curve <- var_split(Curve_courant,Y_courant,timeScale)
+            }
+
           }
 
           else{feuille_split_Curve <- ERvar_split(Curve_courant,Y_courant,timeScale, ntry=ntry)}
@@ -1596,7 +1746,13 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
         if (is.element("scalar",split.spaces)==TRUE){
 
           if( ERT==FALSE){
-            feuille_split_Scalar <- var_split(Scalar_courant,Y_courant,timeScale)
+
+            if (splitrule=="Antho"){
+              feuille_split_Scalar <- var_split_summary(Scalar_courant,Y_courant,timeScale)
+            }else{
+              feuille_split_Scalar <- var_split(Scalar_courant,Y_courant,timeScale)
+            }
+
           }
 
           else{feuille_split_Scalar <- ERvar_split(Scalar_courant,Y_courant,timeScale, ntry=ntry)}
@@ -1662,7 +1818,7 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
             imp_nodes[[2*unique(id_feuille)[i]+1]] <- feuille_split$impur_list[[2]]
           }
 
-
+          # split sur quel espace, quel noeud, quelle variable
           V_split <- rbind(V_split,c(TYPE,unique(id_feuille)[i],vsplit_space))
 
           wY_gauche <- NULL
@@ -1838,13 +1994,13 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 #' @import pbapply
 #'
 #' @keywords internal
-rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=NULL,Y,mtry,ntree, ncores,ERT=FALSE, aligned.shape=FALSE,ntry=3,timeScale=0.1, ...){
+rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=NULL,Y,mtry,ntree, ncores,ERT=FALSE, aligned.shape=FALSE,ntry=3,timeScale=0.1, splitrule=NULL, ...){
 
   #cl <- parallel::makeCluster(ncores)
   #doParallel::registerDoParallel(cl)
 
   #trees <- pbsapply(1:ntree, FUN=function(i){
-    Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale, ...)
+    Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale, splitrule=splitrule, ...)
   #},cl=cl)
 
   #parallel::stopCluster(cl)
@@ -2580,7 +2736,7 @@ permutation_shapes <- function(Shapes, id){
 #' }
 #' @export
 #'
-FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, mtry=NULL, ntree=100,ncores=NULL,ERT=FALSE, timeScale=0.1,ntry=3, imp=TRUE, d_out=0.1, ...){
+FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, mtry=NULL, ntree=100,ncores=NULL,ERT=FALSE, timeScale=0.1,ntry=3, imp=TRUE, d_out=0.1, splitrule = NULL, ...){
 
 
   ### On va regarder les différentes entrées:
@@ -2639,13 +2795,10 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
     ncores <- detectCores()-1
   }
 
-
-  browser()
-
   print("Building the maximal Frechet trees...")
 
   debut <- Sys.time()
-  rf <-  rf_shape_para(Curve=Curve,Scalar=Scalar, Factor=Factor, Shape=Shape, Image=Image,Y=Y, mtry=mtry, ntree=ntree,ERT=ERT,ntry = ntry,timeScale = timeScale,ncores=ncores, aligned.shape = TRUE)
+  rf <-  rf_shape_para(Curve=Curve,Scalar=Scalar, Factor=Factor, Shape=Shape, Image=Image,Y=Y, mtry=mtry, ntree=ntree,ERT=ERT,ntry = ntry,timeScale = timeScale,ncores=ncores, aligned.shape = TRUE, splitrule = splitrule)
   temps <- Sys.time() - debut
 
   if (Y$type=="shape" || Y$type=="image"){
