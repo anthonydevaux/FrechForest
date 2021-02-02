@@ -587,7 +587,7 @@ var_split <- function(X ,Y,timeScale=0.1){
 #' @import lcmm
 #'
 #' @keywords internal
-var_split_summary <- function(X ,Y,timeScale=0.1){
+var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL){
   # Pour le moment on se concentre sur le cas des variables courbes ::
   impur <- rep(0,dim(X$X)[length(dim(X$X))])
   toutes_imp <- list()
@@ -629,12 +629,17 @@ var_split_summary <- function(X ,Y,timeScale=0.1){
 
     if (X$type=="curve"){
 
+      browser()
+
       # modele mixte pour construire les resumes
 
       data_model <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,i])
-      model_output[[i]] <- hlme(fixed = marker ~ time,
-                           random = ~ time,
-                           subject = "id", data = data_model)
+      colnames(data_model)[which(colnames(data_model)=="marker")] <- colnames(X$X)[i]
+
+      model_output[[i]] <- hlme(fixed = X$model[[i]]$fixed,
+                           random = X$model[[i]]$random,
+                           subject = "id", data = data_model, verbose = FALSE)
+
       RE <- predRE(model_output[[i]], data_model)$bi
 
       ###########################
@@ -650,19 +655,24 @@ var_split_summary <- function(X ,Y,timeScale=0.1){
       mtry2 <- ncol(data_summaries) # nombre de resumes qu'on tire pour chaque variable
       var_mtry2 <- sample(1:ncol(data_summaries), mtry2)
 
-      imperete_sum <- rep(NA, length(var_mtry2))
+      impurete_sum <- rep(NA, length(var_mtry2))
       split_sum <- list()
       split_threholds_sum <- rep(NA, length(var_mtry2))
 
       for (i_sum in var_mtry2){ # boucle sur les resumes tires
 
-        split_threholds <- runif(nsplit, min = min(data_summaries[,i_sum]),
-                                 max = max(data_summaries[,i_sum]))
+        if (nsplit_option == "quantile"){ # nsplit sur les quantiles (hors min/max)
+          split_threholds <- quantile(data_summaries[,i_sum], probs = seq(0,1,1/nsplit))[-c(1,nsplit+1)]
+        }
 
-        impurete_nsplit <- rep(NA, nsplit)
+        if (nsplit_option == "sample"){ # nsplit sur tirage aleatoire d'obversations
+          split_threholds <- sample(data_summaries[,i_sum], nsplit)
+        }
+
+        impurete_nsplit <- rep(NA, length(split_threholds))
         split_nsplit <- list()
 
-        for (j in 1:nsplit){ # boucle sur les nsplit
+        for (j in 1:length(split_threholds)){ # boucle sur les nsplit
 
           split_nsplit[[j]] <- factor(ifelse(data_summaries[,i_sum]<=split_threholds[j],1,2))
           impurete <- impurity_split(Y,split_nsplit[[j]], timeScale)
@@ -670,15 +680,15 @@ var_split_summary <- function(X ,Y,timeScale=0.1){
 
         }
 
-        imperete_sum[i_sum] <- impurete_nsplit[which.min(impurete_nsplit)]
+        impurete_sum[i_sum] <- impurete_nsplit[which.min(impurete_nsplit)]
         split_sum[[i_sum]] <- split_nsplit[[which.min(impurete_nsplit)]]
         split_threholds_sum[i_sum] <- split_threholds[which.min(impurete_nsplit)]
       }
 
-      variable_summary[i] <- var_mtry2[which.min(imperete_sum)]
-      split[[i]] <- split_sum[[which.min(imperete_sum)]]
-      impur[i] <- imperete_sum[which.min(imperete_sum)]
-      threshold[i] <- split_threholds_sum[which.min(imperete_sum)]
+      variable_summary[i] <- var_mtry2[which.min(impurete_sum)]
+      split[[i]] <- split_sum[[which.min(impurete_sum)]]
+      impur[i] <- impurete_sum[which.min(impurete_sum)]
+      threshold[i] <- split_threholds_sum[which.min(impurete_sum)]
       toutes_imp[[i]] <- impurete$imp_list # NULL pour surv
 
     }
@@ -1561,7 +1571,8 @@ pred.FT <- function(tree, Curve=NULL,Scalar=NULL,Factor=NULL,Shape=NULL,Image=NU
 #' @import survival
 #'
 #' @keywords internal
-Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y,mtry,ERT=FALSE,aligned.shape=FALSE,ntry=3, timeScale=0.1, splitrule=NULL, ...){
+Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y,mtry,ERT=FALSE,aligned.shape=FALSE,ntry=3, timeScale=0.1,
+                  splitrule=NULL, nsplit_option=NULL, ...){
 
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
   Inputs <- inputs
@@ -1595,7 +1606,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
   Y_pred <- list()
 
-  if (is.element("curve",inputs)==TRUE) Curve_boot <- list(type=Curve$type,   X=Curve$X[wXCurve,, drop=FALSE], id= Curve$id[wXCurve], time = Curve$time[wXCurve]) ### bootstrap pour les courbes
+  if (is.element("curve",inputs)==TRUE) Curve_boot <- list(type=Curve$type,   X=Curve$X[wXCurve,, drop=FALSE], id= Curve$id[wXCurve], time = Curve$time[wXCurve],
+                                                           model=Curve$model) ### bootstrap pour les courbes
   if (is.element("scalar",inputs)==TRUE) Scalar_boot <- list(type=Scalar$type,   X=Scalar$X[wXScalar,, drop=FALSE], id= Scalar$id[wXScalar]) ### bootstrap pour les courbes
   if (is.element("factor",inputs)==TRUE) Factor_boot <- list(type=Factor$type,   X=Factor$X[wXFactor,, drop=FALSE], id= Factor$id[wXFactor])
   if (is.element("shape",inputs)==TRUE) Shape_boot <- list(type=Shape$type,   X=Shape$X[,,wXShape, , drop=FALSE], id= Shape$id[wXShape])
@@ -1617,8 +1629,6 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
   id_feuille <- rep(1,length(Y_boot$id)) #### localisation des feuilles de l'arbre
   id_feuille_prime <- id_feuille
-
-  browser()
 
   for (p in 1:(length(unique(Y_boot$id))/2-1)){
     count_split <- 0
@@ -1659,7 +1669,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
         if (is.element("curve",split.spaces)==TRUE){
           tirageCurve <- sample(1:ncol(Curve$X),length(which(variables=="curve")))
-          Curve_courant <- list(type = Curve_boot$type, X=Curve_boot$X[wXCurve,tirageCurve, drop=FALSE], id=Curve_boot$id[wXCurve, drop=FALSE], time=Curve_boot$time[wXCurve, drop=FALSE])
+          Curve_courant <- list(type = Curve_boot$type, X=Curve_boot$X[wXCurve,tirageCurve, drop=FALSE], id=Curve_boot$id[wXCurve, drop=FALSE], time=Curve_boot$time[wXCurve, drop=FALSE],
+                                model = Curve_boot$model[tirageCurve])
         }
 
         if (is.element("scalar",split.spaces)==TRUE){
@@ -1728,7 +1739,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           if( ERT==FALSE){
 
             if (splitrule=="Antho"){
-              feuille_split_Curve <- var_split_summary(Curve_courant,Y_courant,timeScale)
+              feuille_split_Curve <- var_split_summary(Curve_courant,Y_courant,timeScale,
+                                                       nsplit_option)
             }else{
               feuille_split_Curve <- var_split(Curve_courant,Y_courant,timeScale)
             }
@@ -1748,7 +1760,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           if( ERT==FALSE){
 
             if (splitrule=="Antho"){
-              feuille_split_Scalar <- var_split_summary(Scalar_courant,Y_courant,timeScale)
+              feuille_split_Scalar <- var_split_summary(Scalar_courant,Y_courant,timeScale,
+                                                        nsplit_option)
             }else{
               feuille_split_Scalar <- var_split(Scalar_courant,Y_courant,timeScale)
             }
@@ -1994,13 +2007,15 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 #' @import pbapply
 #'
 #' @keywords internal
-rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=NULL,Y,mtry,ntree, ncores,ERT=FALSE, aligned.shape=FALSE,ntry=3,timeScale=0.1, splitrule=NULL, ...){
+rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=NULL,Y,mtry,ntree, ncores,ERT=FALSE, aligned.shape=FALSE,ntry=3,timeScale=0.1,
+                          splitrule=NULL, nsplit_option=NULL, ...){
 
   #cl <- parallel::makeCluster(ncores)
   #doParallel::registerDoParallel(cl)
 
   #trees <- pbsapply(1:ntree, FUN=function(i){
-    Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale, splitrule=splitrule, ...)
+    Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale,
+          splitrule=splitrule, nsplit_option=nsplit_option, ...)
   #},cl=cl)
 
   #parallel::stopCluster(cl)
@@ -2736,12 +2751,14 @@ permutation_shapes <- function(Shapes, id){
 #' }
 #' @export
 #'
-FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, mtry=NULL, ntree=100,ncores=NULL,ERT=FALSE, timeScale=0.1,ntry=3, imp=TRUE, d_out=0.1, splitrule = NULL, ...){
+FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, mtry=NULL, ntree=100,ncores=NULL,ERT=FALSE, timeScale=0.1,ntry=3, imp=TRUE, d_out=0.1,
+                        splitrule = NULL, nsplit_option = NULL, ...){
 
 
   ### On va regarder les différentes entrées:
   if (is.null(Curve)==FALSE){
-    Curve <- list(type="curve",X=Curve$X,id=Curve$id,time=Curve$time)
+    Curve <- list(type="curve",X=Curve$X,id=Curve$id,time=Curve$time,
+                  model=Curve$model)
   }
   if (is.null(Scalar)==FALSE){
     Scalar <- list(type="scalar",X=Scalar$X,id=Scalar$id)
@@ -2798,7 +2815,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
   print("Building the maximal Frechet trees...")
 
   debut <- Sys.time()
-  rf <-  rf_shape_para(Curve=Curve,Scalar=Scalar, Factor=Factor, Shape=Shape, Image=Image,Y=Y, mtry=mtry, ntree=ntree,ERT=ERT,ntry = ntry,timeScale = timeScale,ncores=ncores, aligned.shape = TRUE, splitrule = splitrule)
+  rf <-  rf_shape_para(Curve=Curve,Scalar=Scalar, Factor=Factor, Shape=Shape, Image=Image,Y=Y, mtry=mtry, ntree=ntree,ERT=ERT,ntry = ntry,timeScale = timeScale,ncores=ncores, aligned.shape = TRUE,
+                       splitrule = splitrule, nsplit_option = nsplit_option)
   temps <- Sys.time() - debut
 
   if (Y$type=="shape" || Y$type=="image"){
