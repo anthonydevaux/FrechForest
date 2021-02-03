@@ -4,7 +4,7 @@
 \alias{var_split_summary}
 \title{Antho Variable Split function}
 \usage{
-var_split_summary(X, Y, timeScale = 0.1)
+var_split_summary(X, Y, timeScale = 0.1, nsplit_option = NULL, nodesize = 5)
 }
 \arguments{
 \item{timeScale}{}

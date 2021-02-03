@@ -4,12 +4,17 @@
 \alias{predRE}
 \title{Function to compute individual random effects using hlme output parameters}
 \usage{
-predRE(model, data)
+predRE(model, formula, data)
 }
 \arguments{
 \item{model}{output object from hlme function}
 
+\item{formula}{list of formula for fixed and random part}
+
 \item{data}{data to compute random effect}
+}
+\value{
+
 }
 \description{
 Function to compute individual random effects using hlme output parameters

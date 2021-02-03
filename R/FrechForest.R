@@ -585,16 +585,18 @@ var_split <- function(X ,Y,timeScale=0.1){
 #' @import Evomorph
 #' @import RiemBase
 #' @import lcmm
+#' @importFrom splines ns
 #'
 #' @keywords internal
-var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL){
+var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL,
+                              nodesize = 5){
   # Pour le moment on se concentre sur le cas des variables courbes ::
   impur <- rep(0,dim(X$X)[length(dim(X$X))])
   toutes_imp <- list()
   split <- list()
   centers <- list() # On va stocker les centres associés aux kmeans
   Pure <- FALSE
-  model_output <- list()
+  model_param <- list()
   threshold <- variable_summary <- rep(NA, ncol(X$X))
 
   for (i in 1:dim(X$X)[length(dim(X$X))]){
@@ -629,18 +631,22 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL){
 
     if (X$type=="curve"){
 
-      browser()
-
       # modele mixte pour construire les resumes
 
       data_model <- data.frame(id = as.numeric(X$id), time = X$time, marker = X$X[,i])
       colnames(data_model)[which(colnames(data_model)=="marker")] <- colnames(X$X)[i]
 
-      model_output[[i]] <- hlme(fixed = X$model[[i]]$fixed,
+      model_output <- hlme(fixed = X$model[[i]]$fixed,
                            random = X$model[[i]]$random,
                            subject = "id", data = data_model, verbose = FALSE)
 
-      RE <- predRE(model_output[[i]], data_model)$bi
+      model_param[[i]] <- list(beta = model_output$best[(model_output$N[1]+1):model_output$N[2]],
+                               varcov = model_output$best[(model_output$N[1]+model_output$N[2]+1):
+                                                            (model_output$N[1]+model_output$N[2]+model_output$N[3])],
+                               stderr = tail(model_output$best, n = 1),
+                               idea0 = model_output$idea0)
+
+      RE <- predRE(model_output, X$model[[i]], data_model)$bi
 
       ###########################
 
@@ -737,10 +743,15 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL){
   }
   true_split <- which.min(impur)
   split <- split[[true_split]]
+
+  if (Y$type=="surv"){
+    if (any(table(split[Y$Y==1],Y$Y[Y$Y==1]) < nodesize)) return(list(Pure=TRUE))
+  }
+
   return(list(split=split, impurete=min(impur),impur_list = toutes_imp[[true_split]], variable=which.min(impur),
               variable_summary=ifelse(X$type=="curve", variable_summary[true_split], NA),
               threshold=ifelse(X$type=="curve", threshold[true_split], NA),
-              model_output=ifelse(X$type=="curve", list(model_output[[true_split]]), NA),
+              model_param=ifelse(X$type=="curve", list(model_param[[true_split]]), NA),
               Pure=Pure))
 }
 
@@ -1416,16 +1427,16 @@ FrechetTree <- function(Curve=NULL,Scalar=NULL,Factor=NULL,Y,timeScale=0.1, ncor
   #Importance <- matrix(0, n_folds, dim(X)[2])
   #err_arbres_select <- rep(NA, n_folds)
   #for (k in 1:n_folds){
-    ### on r?cup?re les ?l?ments de validation::::
-    #X.val <- X[-APP[[k]],]
-    #Y.val <- Y[-APP[[k]]]
-    #time.val <- time[-APP[[k]]]
-    #id.val <- id[-APP[[k]]]
+  ### on r?cup?re les ?l?ments de validation::::
+  #X.val <- X[-APP[[k]],]
+  #Y.val <- Y[-APP[[k]]]
+  #time.val <- time[-APP[[k]]]
+  #id.val <- id[-APP[[k]]]
 
-   # pen <- rep(NA,length(ELAG[[k]]))
-    #for (l in 1:length(pen)){
-    #  pen[l] <- ELAG[[k]][[l]]$Alpha
-    #}
+  # pen <- rep(NA,length(ELAG[[k]]))
+  #for (l in 1:length(pen)){
+  #  pen[l] <- ELAG[[k]][[l]]$Alpha
+  #}
   #}
   ## On va faire l'affichage de la sélection de l'abre
   #plot(err_M)
@@ -1569,10 +1580,11 @@ pred.FT <- function(tree, Curve=NULL,Scalar=NULL,Factor=NULL,Shape=NULL,Image=NU
 #' @import Evomorph
 #' @import geomorph
 #' @import survival
+#' @importFrom splines ns
 #'
 #' @keywords internal
 Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y,mtry,ERT=FALSE,aligned.shape=FALSE,ntry=3, timeScale=0.1,
-                  splitrule=NULL, nsplit_option=NULL, ...){
+                  splitrule=NULL, nsplit_option=NULL, nodesize=1, ...){
 
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
   Inputs <- inputs
@@ -1640,7 +1652,6 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
       }
 
       # mtry des espaces
-
       variables <- sample(V,mtry) # Maintenant on sait combien on doit en tirer dans chaque espace
       # On ne va regarder que les espaces tirés :
       split.spaces <- unique(variables)
@@ -1712,96 +1723,102 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
         # on test les meilleurs splits sur chacun des variables factor tire par mtry
 
-        if (is.element("factor",split.spaces)==TRUE){
+        if (length(unique(Y_courant$id)) >= nodesize*2){ # si nb sujet inferieur a nodesize*2, feuille avec moins de nodesize
 
-          if( ERT==FALSE){
+          if (is.element("factor",split.spaces)==TRUE){
 
-            if (splitrule=="Antho"){
-              feuille_split_Factor <- var_split_summary(Factor_courant,Y_courant,timeScale)
-            }else{
-              feuille_split_Factor <- var_split(Factor_courant,Y_courant,timeScale)
+            if( ERT==FALSE){
+
+              if (splitrule=="Antho"){
+                feuille_split_Factor <- var_split_summary(Factor_courant,Y_courant,timeScale,
+                                                          nodesize)
+              }else{
+                feuille_split_Factor <- var_split(Factor_courant,Y_courant,timeScale)
+              }
+
+            }
+
+            else{feuille_split_Factor <- ERvar_split(Factor_courant,Y_courant,timeScale,ntry = ntry)}
+
+            if (feuille_split_Factor$Pure==FALSE){
+              F_SPLIT <- rbind(F_SPLIT,c("Factor",feuille_split_Factor$impurete))
+              decoupe <- decoupe +1
+            }
+          }
+
+          # on test les meilleurs splits sur chacun des markers tire par mtry
+
+          if (is.element("curve",split.spaces)==TRUE){
+
+            if( ERT==FALSE){
+
+              if (splitrule=="Antho"){
+                feuille_split_Curve <- var_split_summary(Curve_courant,Y_courant,timeScale,
+                                                         nsplit_option,nodesize)
+              }else{
+                feuille_split_Curve <- var_split(Curve_courant,Y_courant,timeScale)
+              }
+
+            }
+
+            else{feuille_split_Curve <- ERvar_split(Curve_courant,Y_courant,timeScale, ntry=ntry)}
+
+            if (feuille_split_Curve$Pure==FALSE){
+              F_SPLIT <- rbind(F_SPLIT,c("Curve",feuille_split_Curve$impurete))
+              decoupe <- decoupe +1
+            }
+          }
+
+          if (is.element("scalar",split.spaces)==TRUE){
+
+            if( ERT==FALSE){
+
+              if (splitrule=="Antho"){
+                feuille_split_Scalar <- var_split_summary(Scalar_courant,Y_courant,timeScale,
+                                                          nsplit_option,nodesize)
+              }else{
+                feuille_split_Scalar <- var_split(Scalar_courant,Y_courant,timeScale)
+              }
+
+            }
+
+            else{feuille_split_Scalar <- ERvar_split(Scalar_courant,Y_courant,timeScale, ntry=ntry)}
+
+            if (feuille_split_Scalar$Pure==FALSE){
+              F_SPLIT <- rbind(F_SPLIT,c("Scalar",feuille_split_Scalar$impurete))
+              decoupe <- decoupe +1
+            }
+
+
+          }
+
+          if (is.element("shape",split.spaces)==TRUE){
+
+            feuille_split_Shape <- ERvar_split(Shape_courant,Y_courant,timeScale, ntry=ntry)
+
+
+            if (feuille_split_Shape$Pure==FALSE){
+              F_SPLIT <- rbind(F_SPLIT,c("Shape",feuille_split_Shape$impurete))
+              decoupe <- decoupe +1
             }
 
           }
 
-          else{feuille_split_Factor <- ERvar_split(Factor_courant,Y_courant,timeScale,ntry = ntry)}
 
-          if (feuille_split_Factor$Pure==FALSE){
-            F_SPLIT <- rbind(F_SPLIT,c("Factor",feuille_split_Factor$impurete))
-            decoupe <- decoupe +1
-          }
-        }
+          if (is.element("image",split.spaces)==TRUE){
 
-        # on test les meilleurs splits sur chacun des markers tire par mtry
+            feuille_split_Image <- ERvar_split(Image_courant,Y_courant,timeScale, ntry=ntry)
 
-        if (is.element("curve",split.spaces)==TRUE){
-
-          if( ERT==FALSE){
-
-            if (splitrule=="Antho"){
-              feuille_split_Curve <- var_split_summary(Curve_courant,Y_courant,timeScale,
-                                                       nsplit_option)
-            }else{
-              feuille_split_Curve <- var_split(Curve_courant,Y_courant,timeScale)
+            if (feuille_split_Image$Pure==FALSE){
+              F_SPLIT <- rbind(F_SPLIT,c("Image",feuille_split_Image$impurete))
+              decoupe <- decoupe +1
             }
 
           }
 
-          else{feuille_split_Curve <- ERvar_split(Curve_courant,Y_courant,timeScale, ntry=ntry)}
-
-          if (feuille_split_Curve$Pure==FALSE){
-            F_SPLIT <- rbind(F_SPLIT,c("Curve",feuille_split_Curve$impurete))
-            decoupe <- decoupe +1
-          }
+        }else{
+          next()
         }
-
-        if (is.element("scalar",split.spaces)==TRUE){
-
-          if( ERT==FALSE){
-
-            if (splitrule=="Antho"){
-              feuille_split_Scalar <- var_split_summary(Scalar_courant,Y_courant,timeScale,
-                                                        nsplit_option)
-            }else{
-              feuille_split_Scalar <- var_split(Scalar_courant,Y_courant,timeScale)
-            }
-
-          }
-
-          else{feuille_split_Scalar <- ERvar_split(Scalar_courant,Y_courant,timeScale, ntry=ntry)}
-
-          if (feuille_split_Scalar$Pure==FALSE){
-            F_SPLIT <- rbind(F_SPLIT,c("Scalar",feuille_split_Scalar$impurete))
-            decoupe <- decoupe +1
-          }
-
-
-        }
-
-        if (is.element("shape",split.spaces)==TRUE){
-
-          feuille_split_Shape <- ERvar_split(Shape_courant,Y_courant,timeScale, ntry=ntry)
-
-
-          if (feuille_split_Shape$Pure==FALSE){
-            F_SPLIT <- rbind(F_SPLIT,c("Shape",feuille_split_Shape$impurete))
-            decoupe <- decoupe +1
-          }
-
-        }
-
-
-        if (is.element("image",split.spaces)==TRUE){
-
-          feuille_split_Image <- ERvar_split(Image_courant,Y_courant,timeScale, ntry=ntry)
-
-          if (feuille_split_Image$Pure==FALSE){
-            F_SPLIT <- rbind(F_SPLIT,c("Image",feuille_split_Image$impurete))
-            decoupe <- decoupe +1
-          }
-
-        }
-
 
         if (decoupe>0){
 
@@ -1832,7 +1849,12 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           }
 
           # split sur quel espace, quel noeud, quelle variable
-          V_split <- rbind(V_split,c(TYPE,unique(id_feuille)[i],vsplit_space))
+          #V_split <- rbind(V_split,c(TYPE,unique(id_feuille)[i],vsplit_space))
+
+          # split sur quel espace, quel noeud, quelle variable, quel resume, quel threshold
+          V_split <- rbind(V_split,c(TYPE,unique(id_feuille)[i],vsplit_space,
+                                     feuille_split$variable_summary, feuille_split$threshold))
+
 
           wY_gauche <- NULL
           wY_droit <- NULL
@@ -1861,8 +1883,17 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           if (X$type=="curve"){
             trajG <- as.data.frame(cbind(X_boot$id[w_gauche], X_boot$time[w_gauche], X_boot$X[w_gauche,vsplit_space]))
             trajD <- as.data.frame(cbind(X_boot$id[w_droit], X_boot$time[w_droit], X_boot$X[w_droit,vsplit_space]))
-            meanFg <- as.matrix(kmlShape::meanFrechet(trajG))
-            meanFd <- as.matrix(kmlShape::meanFrechet(trajD))
+
+            if (splitrule=="Antho"){
+              beta <- feuille_split$model_param[[1]]$beta
+              dfG <- model.matrix(X$model[[vsplit_space]]$fixed[-2], data = data.frame(time = sort(unique(X_boot$time[w_gauche]))))
+              dfD <- model.matrix(X$model[[vsplit_space]]$fixed[-2], data = data.frame(time = sort(unique(X_boot$time[w_droit]))))
+              meanFg <- cbind("times" = sort(unique(X_boot$time[w_gauche])), "traj" = as.vector(dfG%*%beta))
+              meanFd <- cbind("times" = sort(unique(X_boot$time[w_droit])), "traj" = as.vector(dfD%*%beta))
+            }else{
+              meanFg <- as.matrix(kmlShape::meanFrechet(trajG))
+              meanFd <- as.matrix(kmlShape::meanFrechet(trajD))
+            }
           }
 
           if (X$type=="shape"){
@@ -1905,7 +1936,7 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
     if (count_split ==0 ){
 
       V_split <- data.frame(V_split)
-      names(V_split) <- c("type","num_noeud", "var_split")
+      names(V_split) <- c("type","num_noeud", "var_split","var_summary","threshold")
       for (q in unique(id_feuille)){
         w <- which(id_feuille == q)
         if (Y$type=="curve"){
@@ -1930,7 +1961,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
         if (Y$type=="surv"){
           donnees = survfit(Surv(Y_boot$time[w], Y_boot$Y[w])~1)
-          Y_pred[[q]] <- data.frame(times=donnees$time, traj=donnees$surv)
+          # CHF
+          Y_pred[[q]] <- data.frame(times=donnees$time, traj=donnees$cumhaz)
         }
 
       }
@@ -1942,9 +1974,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
     }
   }
 
-
   V_split <- data.frame(V_split)
-  names(V_split) <- c("type","num_noeud", "var_split")
+  names(V_split) <- c("type","num_noeud", "var_split","var_summary","threshold")
   for (q in unique(id_feuille)){
     w <- which(id_feuille == q)
     if (Y$type=="curve"){
@@ -1971,7 +2002,8 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
     if (Y$type=="surv"){
       donnees = survfit(Surv(Y_boot$time[w], Y_boot$Y[w])~1)
-      Y_pred[[q]] <- data.frame(times=donnees$time, traj=donnees$surv)
+      # CHF
+      Y_pred[[q]] <- data.frame(times=donnees$time, traj=donnees$cumhaz)
     }
 
   }
@@ -2005,20 +2037,22 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 #' @import kmlShape
 #' @import doParallel
 #' @import pbapply
+#' @importFrom splines ns
 #'
 #' @keywords internal
 rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=NULL,Y,mtry,ntree, ncores,ERT=FALSE, aligned.shape=FALSE,ntry=3,timeScale=0.1,
-                          splitrule=NULL, nsplit_option=NULL, ...){
+                          splitrule=NULL, nsplit_option=NULL, nodesize=1, ...){
 
-  #cl <- parallel::makeCluster(ncores)
-  #doParallel::registerDoParallel(cl)
+  cl <- parallel::makeCluster(ncores)
+  doParallel::registerDoParallel(cl)
 
-  #trees <- pbsapply(1:ntree, FUN=function(i){
+  trees <- pbsapply(1:ntree, FUN=function(i){
     Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale,
-          splitrule=splitrule, nsplit_option=nsplit_option, ...)
-  #},cl=cl)
+          splitrule=splitrule, nsplit_option=nsplit_option, nodesize=nodesize, ...)
 
-  #parallel::stopCluster(cl)
+  },cl=cl)
+
+  parallel::stopCluster(cl)
 
   return(trees)
 }
@@ -2752,7 +2786,7 @@ permutation_shapes <- function(Shapes, id){
 #' @export
 #'
 FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, mtry=NULL, ntree=100,ncores=NULL,ERT=FALSE, timeScale=0.1,ntry=3, imp=TRUE, d_out=0.1,
-                        splitrule = NULL, nsplit_option = NULL, ...){
+                        splitrule = NULL, nsplit_option = NULL, nodesize = 1, ...){
 
 
   ### On va regarder les différentes entrées:
@@ -2816,8 +2850,10 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
 
   debut <- Sys.time()
   rf <-  rf_shape_para(Curve=Curve,Scalar=Scalar, Factor=Factor, Shape=Shape, Image=Image,Y=Y, mtry=mtry, ntree=ntree,ERT=ERT,ntry = ntry,timeScale = timeScale,ncores=ncores, aligned.shape = TRUE,
-                       splitrule = splitrule, nsplit_option = nsplit_option)
+                       splitrule = splitrule, nsplit_option = nsplit_option, nodesize = nodesize)
   temps <- Sys.time() - debut
+
+  browser()
 
   if (Y$type=="shape" || Y$type=="image"){
     rf <- list(type=Y$type, rf=rf, size = dim(Y$Y) )

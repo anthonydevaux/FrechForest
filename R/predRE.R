@@ -1,7 +1,10 @@
 #' Function to compute individual random effects using hlme output parameters
 #'
 #' @param model output object from hlme function
+#' @param formula list of formula for fixed and random part
 #' @param data data to compute random effect
+#'
+#' @importFrom splines ns
 #'
 #' @return
 #' @export
@@ -9,11 +12,11 @@
 #' @importFrom lcmm fixef
 #'
 #' @examples
-predRE <- function(model, data){
+predRE <- function(model, formula, data){
 
   # a revoir pour gerer les NA
 
-  subject <- model$call$subject
+  subject <- "id"
   beta <- lcmm::fixef(model)[[2]]
 
   # Variance-covariance matrix of the random-effects
@@ -26,9 +29,9 @@ predRE <- function(model, data){
   B[upper.tri(B,diag=TRUE)] <- model$best[(model$N[1]+model$N[2]+1):(model$N[1]+model$N[2]+model$N[3])]
 
   se <- tail(model$best, n = 1)^2 # residual variance error
-  Z <- model.matrix(as.formula(model$call$random), data) # random design matrix
-  X <- model.matrix(as.formula(model$call$fixed[-2]), data) # fixed design matrix
-  Y <- na.omit(data[,as.character(model$call$fixed)[2], drop = FALSE]) # outcome
+  Z <- model.matrix(formula$random, data) # random design matrix
+  X <- model.matrix(formula$fixed, data) # fixed design matrix
+  Y <- na.omit(data[,as.character(formula$fixed)[2], drop = FALSE]) # outcome
 
   bi <- matrix(NA, nrow = length(unique(data$id)), ncol = ncol(B),
                dimnames = list(unique(data$id), colnames(Z)))
