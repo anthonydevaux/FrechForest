@@ -17,18 +17,16 @@ predRE <- function(model, formula, data){
   # a revoir pour gerer les NA
 
   subject <- "id"
-  beta <- lcmm::fixef(model)[[2]]
+  beta <- model$beta
 
   # Variance-covariance matrix of the random-effects
 
   B <- matrix(0, ncol = sum(model$idea0), nrow = sum(model$idea0))
-  colnames(B) <- model$Xnames[model$idea0==1]
-  rownames(B) <- model$Xnames[model$idea0==1]
-  B[upper.tri(B,diag=TRUE)] <- model$best[(model$N[1]+model$N[2]+1):(model$N[1]+model$N[2]+model$N[3])]
+  B[upper.tri(B,diag=TRUE)] <- model$varcov
   B <- t(B)
-  B[upper.tri(B,diag=TRUE)] <- model$best[(model$N[1]+model$N[2]+1):(model$N[1]+model$N[2]+model$N[3])]
+  B[upper.tri(B,diag=TRUE)] <- model$varcov
 
-  se <- tail(model$best, n = 1)^2 # residual variance error
+  se <- model$stderr^2 # residual variance error
   Z <- model.matrix(formula$random, data) # random design matrix
   X <- model.matrix(formula$fixed, data) # fixed design matrix
   Y <- na.omit(data[,as.character(formula$fixed)[2], drop = FALSE]) # outcome

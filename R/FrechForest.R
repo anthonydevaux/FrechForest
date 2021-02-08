@@ -530,8 +530,8 @@ var_split <- function(X ,Y,timeScale=0.1){
       }
     }
 
-    if( X$type=="curve" & Y$type!="surv"){
-
+    #if( X$type=="curve" & Y$type!="surv"){
+    if( X$type=="curve"){
       mclds <- kmlShape::cldsWide(ordonne(X$X[,i], X$time, X$id), unique(X$time), unique(X$id))
       crit <- kmlShape::kmlShape(mclds, nbClusters = 2, timeScale = timeScale, toPlot="none")
       att <- attributes(crit)
@@ -646,7 +646,7 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL,
                                stderr = tail(model_output$best, n = 1),
                                idea0 = model_output$idea0)
 
-      RE <- predRE(model_output, X$model[[i]], data_model)$bi
+      RE <- predRE(model_param[[i]], X$model[[i]], data_model)$bi
 
       ###########################
 
@@ -704,12 +704,18 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL,
 
         nsplit <- 10
 
-        split_threholds <- runif(nsplit, min = min(X$X[,i]), max = max(X$X[,i]))
+        if (nsplit_option == "quantile"){ # nsplit sur les quantiles (hors min/max)
+          split_threholds <- quantile(X$X[,i], probs = seq(0,1,1/nsplit))[-c(1,nsplit+1)]
+        }
 
-        impurete_nsplit <- rep(NA, nsplit)
+        if (nsplit_option == "sample"){ # nsplit sur tirage aleatoire d'obversations
+          split_threholds <- sample(X$X[,i], nsplit)
+        }
+
+        impurete_nsplit <- rep(NA, length(split_threholds))
         split_nsplit <- list()
 
-        for (j in 1:nsplit){ # boucle sur les nsplit
+        for (j in 1:length(split_threholds)){ # boucle sur les nsplit
 
           split_nsplit[[j]] <- factor(ifelse(X$X[,i]<=split_threholds[j],1,2))
           impurete <- impurity_split(Y,split_nsplit[[j]], timeScale)
@@ -719,6 +725,7 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL,
 
         split[[i]] <- split_nsplit[[which.min(impurete_nsplit)]]
         impur[i] <- impurete_nsplit[which.min(impurete_nsplit)]
+        threshold[i] <- split_threholds[which.min(impurete_nsplit)]
         toutes_imp[[i]] <- impurete$imp_list # NULL pour surv
 
       }
@@ -750,7 +757,7 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL,
 
   return(list(split=split, impurete=min(impur),impur_list = toutes_imp[[true_split]], variable=which.min(impur),
               variable_summary=ifelse(X$type=="curve", variable_summary[true_split], NA),
-              threshold=ifelse(X$type=="curve", threshold[true_split], NA),
+              threshold=ifelse(X$type=="curve"|X$type=="scalar", threshold[true_split], NA),
               model_param=ifelse(X$type=="curve", list(model_param[[true_split]]), NA),
               Pure=Pure))
 }
@@ -1559,6 +1566,140 @@ pred.FT <- function(tree, Curve=NULL,Scalar=NULL,Factor=NULL,Shape=NULL,Image=NU
 }
 
 
+#' Predict Mixed Model Tree
+#'
+#' @param tree : Mixed Model Tree
+#' @param Curve [list]: A list that contains the input curves.
+#' @param Scalar [list]: A list that contains the input scalars.
+#' @param Factor [list]: A list that contains the input factors.
+#' @param Shape [list]: A list that contains the input shape.
+#' @param Image [list]: A list that contains the input images.
+#' @param aligned.shape [logical]: \code{TRUE} if the input shapes are aligned and normalized (\code{aligned.shape=FALSE} by default)
+#' @param timeScale [numeric]: Time scale for the input and output curves (\code{timeScale=0.1} by default)
+#'
+#' @import stringr
+#' @import geomorph
+#' @import kmlShape
+#' @import Evomorph
+#' @import RiemBase
+#'
+#' @return
+#' @export
+#'
+pred.MMT <- function(tree, Curve=NULL,Scalar=NULL,Factor=NULL,Shape=NULL,Image=NULL, aligned.shape=FALSE ,timeScale=0.1){
+
+  inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
+  Inputs <- inputs
+
+  for (k in 1:length(Inputs)){
+    str_sub(Inputs[k],1,1) <- str_to_upper(str_sub(Inputs[k],1,1))
+  }
+
+  id.pred <- unique(get(Inputs[1])$id)
+
+  if (is.element("shape",inputs)==TRUE & aligned.shape==FALSE){
+    for (k in 1:dim(Shape$X)[length(dim(Shape$X))]){
+      Shape$X[,,,k] <- gpagen(Shape$X[,,,k],print.progress = FALSE)$coords
+    }
+  }
+
+
+  if (tree$Y$type=="factor"){
+    pred <- factor(rep(NA, length(id.pred)),levels=tree$Ylevels)
+  }
+
+  else{pred <- rep(NA,length(id.pred))}
+
+  for (i in 1:length(id.pred)){
+
+    if (is.element("curve",inputs)==TRUE) wCurve <- which(Curve$id==id.pred[i])
+    if (is.element("scalar",inputs)==TRUE) wScalar <- which(Scalar$id==id.pred[i])
+    if (is.element("factor",inputs)==TRUE) wFactor <- which(Factor$id==id.pred[i])
+    if (is.element("shape",inputs)==TRUE) wShape <- which(Shape$id==id.pred[i])
+    if (is.element("image",inputs)==TRUE) wImage <- which(Image$id==id.pred[i])
+
+    noeud_courant <- 1
+
+    while (is.element(noeud_courant, tree$feuilles)==FALSE){
+
+      X <- get(as.character(tree$V_split[which(tree$V_split[,2]==noeud_courant),1]))
+      type <- str_to_lower(as.character(tree$V_split[which(tree$V_split[,2]==noeud_courant),1]))
+      var.split <- as.numeric(as.character(tree$V_split[which(tree$V_split[,2]==noeud_courant),3]))
+      var.split.sum <- as.numeric(as.character(tree$V_split[which(tree$V_split[,2]==noeud_courant),4]))
+      threshold <- as.numeric(as.character(tree$V_split[which(tree$V_split[,2]==noeud_courant),5]))
+
+      # Maintenant il nous faut regarder la différence entre la moyenne à gauche et a droite et conclure :
+
+      meanG <- tree$hist_nodes[[2*noeud_courant]]
+      meanD <- tree$hist_nodes[[2*noeud_courant+1]]
+
+      if (type=="curve"){
+        RE <- predRE(tree$model_param[[noeud_courant]][[1]],
+                     X$model[[var.split]],
+                     cbind(id = X$id[wCurve], X$X[wCurve,,drop = FALSE], time = X$time[wCurve]))$bi
+
+        ######################
+
+        # autres resumes
+
+        #####################
+
+        data_summaries <- RE
+
+        if (data_summaries[,var.split.sum] < threshold){
+          distG <- 0
+          distD <- 1
+        }else{
+          distG <- 1
+          distD <- 0
+        }
+
+      }
+      if (type=="scalar"){
+
+        if (X$X[wScalar,var.split] < threshold){
+          distG <- 0
+          distD <- 1
+        }else{
+          distG <- 1
+          distD <- 0
+        }
+
+      }
+
+      if (type=="shape"){
+        elementz <- array(X$X[,,wShape,var.split],dim = c(nrow(meanG),ncol(meanG),1))
+        distG <- ShapeDist(elementz,meanG)
+        distD <- ShapeDist(elementz, meanD)
+      }
+
+      if (type=="image"){
+        distG <- rbase.pdist2(riemfactory(array(data = meanG$x,dim=c(nrow(meanG$x), ncol(meanG$x),1))),riemfactory(array(X$X[,,wImage,var.split],dim=c(nrow(meanG$x), ncol(meanG$x),1))))
+        distD <- rbase.pdist2(riemfactory(array(data = meanD$x,dim=c(nrow(meanD$x), ncol(meanD$x),1))),riemfactory(array(X$X[,,wImage,var.split],dim=c(nrow(meanD$x), ncol(meanD$x),1))))
+      }
+
+      if (type=="factor"){
+        distG <- -1*(is.element(X$X[wFactor,var.split],meanG))
+        distD <- -1*(is.element(X$X[wFactor,var.split],meanD))
+      }
+
+      if (distG <= distD) { noeud_courant <- 2*noeud_courant}
+      if (distD < distG) {noeud_courant <- 2*noeud_courant +1}
+
+
+    }
+
+    if(tree$Y$type=="curve" || tree$Y$type=="image" || tree$Y$type=="shape" || tree$Y$type=="surv"){
+      pred[i] <- noeud_courant
+    }
+
+    else{
+      pred[i] <- tree$Y_pred[[noeud_courant]]
+    }
+  }
+  return(pred)
+}
+
 #' Randomized Frechet tree
 #'
 #' @param Curve [list]:
@@ -1596,6 +1737,7 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
   impurity_feuilles <- NULL
   V_split <- NULL
   hist_nodes <- list()
+  model_param <- list()
   id_boot <- unique(sample(unique(Y$id), length(unique(Y$id)), replace=TRUE))
   boot <- id_boot
   decoupe <- 1
@@ -1855,6 +1997,7 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
           V_split <- rbind(V_split,c(TYPE,unique(id_feuille)[i],vsplit_space,
                                      feuille_split$variable_summary, feuille_split$threshold))
 
+          model_param[[unique(id_feuille)[i]]] <- feuille_split$model_param
 
           wY_gauche <- NULL
           wY_droit <- NULL
@@ -1890,6 +2033,7 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
               dfD <- model.matrix(X$model[[vsplit_space]]$fixed[-2], data = data.frame(time = sort(unique(X_boot$time[w_droit]))))
               meanFg <- cbind("times" = sort(unique(X_boot$time[w_gauche])), "traj" = as.vector(dfG%*%beta))
               meanFd <- cbind("times" = sort(unique(X_boot$time[w_droit])), "traj" = as.vector(dfD%*%beta))
+
             }else{
               meanFg <- as.matrix(kmlShape::meanFrechet(trajG))
               meanFd <- as.matrix(kmlShape::meanFrechet(trajD))
@@ -1968,9 +2112,11 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
       }
       if (Y$type=="factor"){
         Ylevels <- unique(Y_boot$Y)
-        return(list(feuilles = id_feuille, idY=Y_boot$id,Ytype=Y_boot$type, V_split=V_split, hist_nodes=hist_nodes, Y_pred = Y_pred, time = time, Y=Y, boot=boot, Ylevels=Ylevels))
+        return(list(feuilles = id_feuille, idY=Y_boot$id,Ytype=Y_boot$type, V_split=V_split, hist_nodes=hist_nodes, Y_pred = Y_pred, time = time, Y=Y, boot=boot, Ylevels=Ylevels,
+                    model_param = model_param))
       }
-      return(list(feuilles = id_feuille, idY=Y_boot$id,Ytype=Y_boot$type, V_split=V_split, hist_nodes=hist_nodes, Y_pred = Y_pred, time = time, Y=Y, boot=boot))
+      return(list(feuilles = id_feuille, idY=Y_boot$id,Ytype=Y_boot$type, V_split=V_split, hist_nodes=hist_nodes, Y_pred = Y_pred, time = time, Y=Y, boot=boot,
+                  model_param = model_param))
     }
   }
 
@@ -2049,7 +2195,6 @@ rf_shape_para <- function(Curve=NULL, Scalar=NULL, Factor=NULL,Shape=NULL,Image=
   trees <- pbsapply(1:ntree, FUN=function(i){
     Rtmax(Curve=Curve,Scalar = Scalar,Factor = Factor,Shape=Shape,Image=Image,Y,mtry,ERT=ERT, aligned.shape=aligned.shape,ntry=ntry,timeScale=timeScale,
           splitrule=splitrule, nsplit_option=nsplit_option, nodesize=nodesize, ...)
-
   },cl=cl)
 
   parallel::stopCluster(cl)
@@ -2234,7 +2379,8 @@ predict.FrechForest <- function(object, Curve=NULL,Scalar=NULL,Factor=NULL,Shape
 #' @import RiemBase
 #'
 #' @keywords internal
-OOB.tree <- function(tree, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, timeScale=0.1, d_out=0.1){
+OOB.tree <- function(tree, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL ,Y, timeScale=0.1, d_out=0.1,
+                     splitrule=NULL){
 
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
   Inputs <- inputs
@@ -2251,12 +2397,14 @@ OOB.tree <- function(tree, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Ima
   Curve_courant <- NULL
   Image_courant <- NULL
   Shape_courant <- NULL
+
   if (Y$type=="curve" || Y$type=="surv"){
     for (i in OOB){
       id_wY <- which(Y$id== i)
       if (is.element("curve",inputs)==TRUE) {
         id_wXCurve <- which(Curve$id==i)
-        Curve_courant <- list(type="curve",X=Curve$X[id_wXCurve,,drop=FALSE], id=Curve$id[id_wXCurve],time=Curve$time[id_wXCurve])
+        Curve_courant <- list(type="curve",X=Curve$X[id_wXCurve,,drop=FALSE], id=Curve$id[id_wXCurve],time=Curve$time[id_wXCurve],
+                              model=Curve$model)
       }
 
       if (is.element("shape",inputs)==TRUE){
@@ -2278,9 +2426,19 @@ OOB.tree <- function(tree, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Ima
         id_wXScalar <- which(Scalar$id==i)
         Scalar_courant <- list(type="scalar",X=Scalar$X[id_wXScalar,,drop=FALSE], id=Scalar$id[id_wXScalar])
       }
-      pred_courant <- pred.FT(tree, Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape = Shape_courant,Image=Image_courant, timeScale=timeScale, aligned.shape = TRUE)
-      #chancla <- DouglasPeuckerNbPoints(tree$Y_Curves[[pred_courant]]$times, tree$Y_Curves[[pred_courant]]$traj, nbPoints = length(stats::na.omit(Y[id_w])))
-      xerror[which(OOB==i)] <- kmlShape::distFrechet(tree$Y_pred[[pred_courant]]$times, tree$Y_pred[[pred_courant]]$traj, Y$time[id_wY], Y$Y[id_wY], timeScale = d_out)^2
+
+      if (splitrule!="Antho"){
+        pred_courant <- pred.FT(tree, Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape = Shape_courant,Image=Image_courant, timeScale=timeScale, aligned.shape = TRUE)
+        #chancla <- DouglasPeuckerNbPoints(tree$Y_Curves[[pred_courant]]$times, tree$Y_Curves[[pred_courant]]$traj, nbPoints = length(stats::na.omit(Y[id_w])))
+        xerror[which(OOB==i)] <- kmlShape::distFrechet(tree$Y_pred[[pred_courant]]$times, tree$Y_pred[[pred_courant]]$traj, Y$time[id_wY], Y$Y[id_wY], timeScale = d_out)^2
+      }
+
+      if (splitrule=="Antho"){
+        pred_courant <- pred.MMT(tree, Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape = Shape_courant,Image=Image_courant, timeScale=timeScale, aligned.shape = TRUE)
+        #chancla <- DouglasPeuckerNbPoints(tree$Y_Curves[[pred_courant]]$times, tree$Y_Curves[[pred_courant]]$traj, nbPoints = length(stats::na.omit(Y[id_w])))
+        xerror[which(OOB==i)] <- kmlShape::distFrechet(tree$Y_pred[[pred_courant]]$times, tree$Y_pred[[pred_courant]]$traj, Y$time[id_wY], Y$Y[id_wY], timeScale = d_out)^2
+      }
+
     }
   }
   else {
@@ -2381,7 +2539,10 @@ Curve.reduc.times <- function(time.init , traj.init, time.new){
 #' @import geomorph
 #'
 #' @keywords internal
-OOB.rfshape <- function(rf, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL, Y, timeScale=0.1, d_out=0.1){
+OOB.rfshape <- function(rf, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL, Y, timeScale=0.1, d_out=0.1,
+                        splitrule = NULL){
+
+  browser()
 
   ### Pour optimiser le code il faudra virer cette ligne et ne le calculer qu'une seule fois !
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
@@ -2443,7 +2604,14 @@ OOB.rfshape <- function(rf, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Im
             Image_courant <- list(type="image", X=Image$X[,,w_XImage,, drop=FALSE], id=Image$id[w_XImage])
           }
 
-          pred <- pred.FT(rf$rf[,t],Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape=Shape_courant,Image=Image_courant, timeScale = timeScale, aligned.shape = TRUE)
+          if (splitrule!="Antho"){
+            pred <- pred.FT(rf$rf[,t],Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape=Shape_courant,Image=Image_courant, timeScale = timeScale, aligned.shape = TRUE)
+          }
+
+          if (splitrule=="Antho"){
+            pred <- pred.MMT(rf$rf[,t],Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape=Shape_courant,Image=Image_courant, timeScale = timeScale, aligned.shape = TRUE)
+          }
+
           courbe <- rf$rf[,t]$Y_pred[[pred]] ## Il faut les mettre aux mêmes temps que Y$time[w_y]
 
           for (j in 1:length(w_y)){
@@ -2497,7 +2665,14 @@ OOB.rfshape <- function(rf, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Im
             Image_courant <- list(type="image", X=Image$X[,,w_XImage,, drop=FALSE], id=Image$id[w_XImage])
           }
 
-          pred <- pred.FT(rf$rf[,t],Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape=Shape_courant,Image=Image_courant, timeScale = timeScale, aligned.shape = TRUE)
+          if (splitrule!="Antho"){
+            pred <- pred.FT(rf$rf[,t],Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape=Shape_courant,Image=Image_courant, timeScale = timeScale, aligned.shape = TRUE)
+          }
+
+          if (splitrule=="Antho"){
+            pred <- pred.FT(rf$rf[,t],Curve=Curve_courant,Scalar=Scalar_courant,Factor=Factor_courant,Shape=Shape_courant,Image=Image_courant, timeScale = timeScale, aligned.shape = TRUE)
+          }
+
           courbe <- rf$rf[,t]$Y_pred[[pred]]
           pred_courant <- rbind(cbind(rep(t,dim(courbe)[1]),courbe),pred_courant)
         }
@@ -2853,8 +3028,6 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
                        splitrule = splitrule, nsplit_option = nsplit_option, nodesize = nodesize)
   temps <- Sys.time() - debut
 
-  browser()
-
   if (Y$type=="shape" || Y$type=="image"){
     rf <- list(type=Y$type, rf=rf, size = dim(Y$Y) )
   }
@@ -2890,21 +3063,24 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
     Y= list(type="surv", Y=ykm, id=idkm, time=tkm)
   }
 
-
   if (Y$type=="surv"){
     for (i in 1:ntree){
-      xerror[i] = OOB.tree(rf$rf[,i], Curve=Curve,Scalar=Scalar,Factor = Factor,Shape=Shape,Image=Image, Y, timeScale=timeScale,d_out=d_out)
+      xerror[i] = OOB.tree(rf$rf[,i], Curve=Curve,Scalar=Scalar,Factor = Factor,Shape=Shape,Image=Image, Y, timeScale=timeScale,d_out=d_out,
+                           splitrule = splitrule)
     }
     print("on passe erreur oob de la foret")
-    oob.err <- OOB.rfshape(rf,Curve = Curve,Scalar =Scalar,Factor=Factor,Shape=Shape,Image=Image,Y, timeScale=timeScale, d_out=d_out)
+    oob.err <- OOB.rfshape(rf,Curve = Curve,Scalar =Scalar,Factor=Factor,Shape=Shape,Image=Image,Y, timeScale=timeScale, d_out=d_out,
+                           splitrule = splitrule)
   }
 
   else {
     for (i in 1:ntree){
-      xerror[i] = OOB.tree(rf$rf[,i], Curve=Curve,Scalar=Scalar,Factor = Factor,Shape=Shape,Image=Image, Y=Y, timeScale=timeScale,d_out=d_out)
+      xerror[i] = OOB.tree(rf$rf[,i], Curve=Curve,Scalar=Scalar,Factor = Factor,Shape=Shape,Image=Image, Y=Y, timeScale=timeScale,d_out=d_out,
+                           splitrule = splitrule)
     }
     print("on passe erreur oob de la foret")
-    oob.err <- OOB.rfshape(rf,Curve = Curve,Scalar =Scalar,Factor=Factor,Shape=Shape,Image=Image,Y=Y, timeScale=timeScale, d_out=d_out)
+    oob.err <- OOB.rfshape(rf,Curve = Curve,Scalar =Scalar,Factor=Factor,Shape=Shape,Image=Image,Y=Y, timeScale=timeScale, d_out=d_out,
+                           splitrule = splitrule)
   }
 
   # Ok pour le XERROR
