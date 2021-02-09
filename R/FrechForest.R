@@ -2021,23 +2021,11 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
 
           #print(paste("Split on the variable", vsplit_space, "on the space of ", paste(TYPE,"s",sep="")))
 
-          # meanFg et Fd doivent contenir les courbes moyennes issue du modele mixte
-
           if (X$type=="curve"){
             trajG <- as.data.frame(cbind(X_boot$id[w_gauche], X_boot$time[w_gauche], X_boot$X[w_gauche,vsplit_space]))
             trajD <- as.data.frame(cbind(X_boot$id[w_droit], X_boot$time[w_droit], X_boot$X[w_droit,vsplit_space]))
-
-            if (splitrule=="Antho"){
-              beta <- feuille_split$model_param[[1]]$beta
-              dfG <- model.matrix(X$model[[vsplit_space]]$fixed[-2], data = data.frame(time = sort(unique(X_boot$time[w_gauche]))))
-              dfD <- model.matrix(X$model[[vsplit_space]]$fixed[-2], data = data.frame(time = sort(unique(X_boot$time[w_droit]))))
-              meanFg <- cbind("times" = sort(unique(X_boot$time[w_gauche])), "traj" = as.vector(dfG%*%beta))
-              meanFd <- cbind("times" = sort(unique(X_boot$time[w_droit])), "traj" = as.vector(dfD%*%beta))
-
-            }else{
-              meanFg <- as.matrix(kmlShape::meanFrechet(trajG))
-              meanFd <- as.matrix(kmlShape::meanFrechet(trajD))
-            }
+            meanFg <- as.matrix(kmlShape::meanFrechet(trajG))
+            meanFd <- as.matrix(kmlShape::meanFrechet(trajD))
           }
 
           if (X$type=="shape"){
@@ -2228,7 +2216,8 @@ predict.FrechForest <- function(object, Curve=NULL,Scalar=NULL,Factor=NULL,Shape
   # La première étape est de toujours lire les prédicteurs ::
 
   if (is.null(Curve)==FALSE){
-    Curve <- list(type="curve",X=Curve$X,id=Curve$id,time=Curve$time)
+    Curve <- list(type="curve",X=Curve$X,id=Curve$id,time=Curve$time,
+                  model=object$curve.model)
   }
   if (is.null(Scalar)==FALSE){
     Scalar <- list(type="scalar",X=Scalar$X,id=Scalar$id)
@@ -2267,9 +2256,19 @@ predict.FrechForest <- function(object, Curve=NULL,Scalar=NULL,Factor=NULL,Shape
     pred.feuille <- as.data.frame(matrix(0, ncol(object$rf), length(Id.pred)))
   }
 
-  for (t in 1:ncol(object$rf)){
-    pred.feuille[t,] <- pred.FT(object$rf[,t], Curve = Curve,Scalar = Scalar,Factor=Factor,Shape=Shape,Image=Image, timeScale, aligned.shape = aligned.shape)
+  if (object$splitrule!="Antho"){
+    for (t in 1:ncol(object$rf)){
+      pred.feuille[t,] <- pred.FT(object$rf[,t], Curve = Curve,Scalar = Scalar,Factor=Factor,Shape=Shape,Image=Image, timeScale, aligned.shape = aligned.shape)
+    }
   }
+
+  if (object$splitrule=="Antho"){
+    for (t in 1:ncol(object$rf)){
+      pred.feuille[t,] <- pred.MMT(object$rf[,t], Curve = Curve,Scalar = Scalar,Factor=Factor,Shape=Shape,Image=Image, timeScale, aligned.shape = aligned.shape)
+    }
+  }
+
+  browser()
 
   if (object$type=="scalar"){
     pred <- apply(pred.feuille, 2, "mean")
@@ -2541,8 +2540,6 @@ Curve.reduc.times <- function(time.init , traj.init, time.new){
 #' @keywords internal
 OOB.rfshape <- function(rf, Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL, Y, timeScale=0.1, d_out=0.1,
                         splitrule = NULL){
-
-  browser()
 
   ### Pour optimiser le code il faudra virer cette ligne et ne le calculer qu'une seule fois !
   inputs <- read.Xarg(c(Curve,Scalar,Factor,Shape,Image))
@@ -3085,17 +3082,18 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
 
   # Ok pour le XERROR
 
-
   if (imp == FALSE && Y$type!="surv"){
     var.ini <- impurity(Y, timeScale)
     varex <- 1 - mean(oob.err$err)/var.ini
-    frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels, xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, varex=varex, size=size, time=temps)
+    frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels, xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, varex=varex, size=size, time=temps,
+                splitrule=splitrule, curve.model=Curve$model)
     class(frf) <- c("FrechForest")
     return(frf)
   }
 
   if (imp == FALSE && Y$type=="surv"){
-    frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels, xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, size=size, time=temps)
+    frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels, xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, size=size, time=temps,
+                splitrule=splitrule, curve.model=Curve$model)
     class(frf) <- c("FrechForest")
     return(frf)
   }
@@ -3289,13 +3287,15 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
   temps.imp <- Sys.time() - debut
 
   if (Y$type == "surv"){
-    frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels,xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, Importance=Importance, time=temps, size=size)
+    frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels,xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, Importance=Importance, time=temps, size=size,
+                splitrule=splitrule, curve.model=Curve$model)
     class(frf) <- c("FrechForest")
     return(frf)
   }
   var.ini <- impurity(Y, timeScale)
   varex <- 1 - mean(oob.err$err)/var.ini
-  frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels,xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, Importance=Importance, varex=varex, time=temps, size=size)
+  frf <- list(rf=rf$rf,type=rf$type,levels=rf$levels,xerror=xerror,oob.err=oob.err$err,oob.pred= oob.err$oob.pred, Importance=Importance, varex=varex, time=temps, size=size,
+              splitrule=splitrule, curve.model=Curve$model)
   class(frf) <- c("FrechForest")
   return(frf)
 }
