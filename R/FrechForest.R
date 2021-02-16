@@ -735,6 +735,7 @@ var_split_summary <- function(X ,Y,timeScale=0.1, nsplit_option = NULL,
         split[[i]][which(X$X[,i]==unique(X$X[,i])[1])] <- 1
         impurete <- impurity_split(Y,split[[i]], timeScale)
         impur[i] <- impurete$impur
+        threshold[i] <- mean(unique(X$X[,i]))
         toutes_imp[[i]] <- impurete$imp_list
       }
 
@@ -2068,7 +2069,15 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
     if (count_split ==0 ){
 
       V_split <- data.frame(V_split)
-      names(V_split) <- c("type","num_noeud", "var_split","var_summary","threshold")
+
+      if (splitrule!="Antho"){
+        names(V_split) <- c("type","num_noeud", "var_split")
+      }
+
+      if (splitrule=="Antho"){
+        names(V_split) <- c("type","num_noeud", "var_split","var_summary","threshold")
+      }
+
       for (q in unique(id_feuille)){
         w <- which(id_feuille == q)
         if (Y$type=="curve"){
@@ -2109,7 +2118,15 @@ Rtmax <- function(Curve=NULL, Scalar=NULL, Factor=NULL, Shape=NULL, Image=NULL,Y
   }
 
   V_split <- data.frame(V_split)
-  names(V_split) <- c("type","num_noeud", "var_split","var_summary","threshold")
+
+  if (splitrule!="Antho"){
+    names(V_split) <- c("type","num_noeud", "var_split")
+  }
+
+  if (splitrule=="Antho"){
+    names(V_split) <- c("type","num_noeud", "var_split","var_summary","threshold")
+  }
+
   for (q in unique(id_feuille)){
     w <- which(id_feuille == q)
     if (Y$type=="curve"){
@@ -2267,8 +2284,6 @@ predict.FrechForest <- function(object, Curve=NULL,Scalar=NULL,Factor=NULL,Shape
       pred.feuille[t,] <- pred.MMT(object$rf[,t], Curve = Curve,Scalar = Scalar,Factor=Factor,Shape=Shape,Image=Image, timeScale, aligned.shape = aligned.shape)
     }
   }
-
-  browser()
 
   if (object$type=="scalar"){
     pred <- apply(pred.feuille, 2, "mean")
