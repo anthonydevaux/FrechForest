@@ -3152,7 +3152,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
         Curve.perm$X[-id_boot_Curve,p] <- permutation_courbes(Curve$X[-id_boot_Curve,p], Curve$id[-id_boot_Curve])
 
 
-        Curve.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve.perm, Scalar = Scalar, Factor=Factor,Shape=Shape, Image=Image, Y, timeScale=timeScale)
+        Curve.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve.perm, Scalar = Scalar, Factor=Factor,Shape=Shape, Image=Image, Y, timeScale=timeScale,
+                                   splitrule = splitrule)
 
       }
       Curve.perm$X[,p] <- Curve$X[,p]
@@ -3185,7 +3186,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
 
         Scalar.perm$X[-id_boot_Scalar,p] <- sample(Scalar.perm$X[-id_boot_Scalar,p])
 
-        Scalar.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar.perm, Factor=Factor,Shape=Shape, Image=Image, Y, timeScale=timeScale)
+        Scalar.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar.perm, Factor=Factor,Shape=Shape, Image=Image, Y, timeScale=timeScale,
+                                    splitrule = splitrule)
 
       }
       Scalar.perm$X[,p] <- Scalar$X[,p]
@@ -3218,7 +3220,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
 
         Factor.perm$X[-id_boot_Factor,p] <- sample(Factor.perm$X[-id_boot_Factor,p])
 
-        Factor.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar, Factor=Factor.perm ,Shape=Shape, Image=Image, Y, timeScale=timeScale)
+        Factor.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar, Factor=Factor.perm ,Shape=Shape, Image=Image, Y, timeScale=timeScale,
+                                    splitrule = splitrule)
 
       }
       ##on remet la variable en place :::
@@ -3252,7 +3255,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
 
         Shape.perm$X[,,-id_boot_Shape,p] <- permutation_shapes(Shape.perm$X[,,-id_boot_Shape, p], Shape.perm$id[-id_boot_Shape])
 
-        Shape.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar, Factor=Factor,Shape=Shape.perm, Image=Image, Y, timeScale=timeScale)
+        Shape.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar, Factor=Factor,Shape=Shape.perm, Image=Image, Y, timeScale=timeScale,
+                                   splitrule = splitrule)
 
       }
       ##on remet la variable en place :::
@@ -3286,7 +3290,8 @@ FrechForest <- function(Curve=NULL,Scalar=NULL, Factor=NULL, Shape=NULL, Image=N
 
         Image.perm$X[,,-id_boot_Image,p] <- permutation_shapes(Image.perm$X[,,-id_boot_Image, p], Image.perm$id[-id_boot_Image])
 
-        Image.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar, Factor=Factor,Shape=Shape, Image=Image.perm, Y, timeScale=timeScale)
+        Image.err[k,p] <- OOB.tree(rf$rf[,k], Curve=Curve, Scalar = Scalar, Factor=Factor,Shape=Shape, Image=Image.perm, Y, timeScale=timeScale,
+                                   splitrule = splitrule)
 
       }
       ##on remet la variable en place :::
